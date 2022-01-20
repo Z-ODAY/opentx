@@ -1,255 +1,559 @@
-project(OpenTX)
+option(SHUTDOWN_CONFIRMATION "Shutdown confirmation" OFF)
+option(LCD_DUAL_BUFFER "Dual LCD Buffer" OFF)
+option(PXX1 "PXX1 protocol support" ON)
+option(PXX2 "PXX2 protocol support" OFF)
+option(AFHDS3 "AFHDS3 TX Module" OFF)
+option(GHOST "Ghost TX Module" ON)
+option(INTERNAL_MODULE_PPM "Support for PPM internal module" OFF)
+option(AUTOUPDATE "Auto update internal chips from SD" OFF)
+option(BIND_KEY "Enable bind button" OFF)
 
-set(VERSION_MAJOR "2")
-set(VERSION_MINOR "3")
-set(VERSION_REVISION "14")
-if(TEST_BUILD_WARNING OR ALLOW_NIGHTLY_BUILDS)
-  math(EXPR VERSION_REVISION "${VERSION_REVISION} + 1")
-endif()
-set(VERSION_SUFFIX $ENV{OPENTX_VERSION_SUFFIX})
-set(VERSION_FAMILY ${VERSION_MAJOR}.${VERSION_MINOR})
-set(VERSION ${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REVISION}${VERSION_SUFFIX})
-set(SDCARD_REVISION "0039")
-set(SDCARD_VERSION  ${VERSION_MAJOR}.${VERSION_MINOR}V${SDCARD_REVISION})
+set(EXTERNAL_MODULE YES)
+add_definitions(-DHARDWARE_TRIMS)
 
-cmake_minimum_required(VERSION 2.8)
-cmake_policy(SET CMP0020 NEW)
-cmake_policy(SET CMP0023 OLD)
-if(POLICY CMP0042)
-  cmake_policy(SET CMP0042 NEW)
-endif()
-if(POLICY CMP0043)
-  cmake_policy(SET CMP0043 NEW)
-endif()
-if(POLICY CMP0054)
-  cmake_policy(SET CMP0054 NEW)
-endif()
-if(POLICY CMP0058)
-  cmake_policy(SET CMP0058 NEW)  # for ninja
-endif()
-
-set(CMAKE_COLOR_MAKEFILE ON)
-
-set(CMAKE_CXX_STANDARD 11)
-
-set(RADIO_DIRECTORY ${PROJECT_SOURCE_DIR}/radio)
-set(RADIO_SRC_DIRECTORY ${RADIO_DIRECTORY}/src)
-set(COMPANION_SRC_DIRECTORY ${PROJECT_SOURCE_DIR}/companion/src)
-set(SIMU_SRC_DIRECTORY ${COMPANION_SRC_DIRECTORY}/simulation)
-
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake)
-
-include(Macros)
-today(DATE)
-now(TIME)
-git_id(GIT_STR)
-
-message(STATUS "OpenTX ${VERSION} @${GIT_STR}")
-
-# options shared by all targets
-
-option(APP_CUSTOM_DBG_HANDLER "Use custom message handler for debug output in all Qt apps." ON)
-set(APP_CUSTOM_DBG_LEVEL "0" CACHE STRING
-  "Debug output level: 0=debug+; 1=info+; 2=warn+; 3=critical+; 4=fatal only.")
-set(APP_CUSTOM_DBG_SHOW_FILE "DEFAULT" CACHE STRING
-  "Show source file names in debug output. 1/0/DEFAULT (default is ON with DEBUG builds).")
-
-option(VERBOSE_CMAKELISTS "Show extra information while processing CMakeLists.txt files." OFF)
-option(WARNINGS_AS_ERRORS "Treat any compiler warning as an error (adds -Werror flag)." OFF)
-
-if(WIN32)
-  set(WIN_EXTRA_LIBS_PATH "C:/Programs" CACHE PATH
-    "Base path to extra libs/headers on Windows (SDL & pthreads folders should be in here).")
-  list(APPEND CMAKE_PREFIX_PATH "${WIN_EXTRA_LIBS_PATH}" "${WIN_EXTRA_LIBS_PATH}/SDL")  # hints for FindSDL
-endif()
-
-# Python check
-find_package("PythonInterp")
-if(PYTHONINTERP_FOUND)
-  message(STATUS "Python found, version: ${PYTHON_VERSION_STRING}")
-  get_filename_component(PYTHON_DIRECTORY ${PYTHON_EXECUTABLE} DIRECTORY)
-else()
-  message(WARNING "Python not found! Most firmware and simu flavors not buildable.")
-  set(LUA NO)
-endif()
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")  # regular Clang or AppleClang
-  set(CLANG TRUE)
-endif()
-
-option(DISABLE_COMPANION "Disable building companion and simulators" OFF)
-
-if(NOT DISABLE_COMPANION)  # FIXME cosmetics/style
-
-if(APPLE AND EXISTS /usr/local/opt/qt5)
-	# Homebrew installs Qt5 (up to at least 5.9.1) in
-	# /usr/local/qt5, ensure it can be found by CMake since
-	# it is not in the default /usr/local prefix.
-	list(APPEND CMAKE_PREFIX_PATH "/usr/local/opt/qt5")
-endif()
-
-find_package(Qt5Core)
-find_package(Qt5Widgets)
-find_package(Qt5Xml)
-find_package(Qt5LinguistTools)
-find_package(Qt5PrintSupport)
-find_package(Qt5Multimedia)
-find_package(Qt5Svg)
-
-if(Qt5Core_FOUND)
-  message(STATUS "Qt Version: ${Qt5Core_VERSION}")
-
-  ### Get locations of Qt binary executables & libs (libs are for distros, not for linking)
-  # first set up some hints
-  get_target_property(QtCore_LOCATION Qt5::Core LOCATION)
-  get_filename_component(qt_core_path ${QtCore_LOCATION} PATH)
-  if(APPLE)
-    get_filename_component(qt_core_path "${qt_core_path}/.." ABSOLUTE)
+if(PCB STREQUAL X9E)
+  option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" ON)
+  option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" OFF)
+  set(PWR_BUTTON "PRESS" CACHE STRING "Pwr button type (PRESS/SWITCH)")
+  set(STICKS "STANDARD" CACHE STRING "Sticks type (STANDARD/HORUS)")
+  set(CPU_TYPE STM32F4)
+  set(CPU_TYPE_FULL STM32F407xE)  # for size report
+  set(LINKER_SCRIPT targets/taranis/stm32f4_flash.ld)
+  add_definitions(-DSTM32F40_41xxx)
+  set(HAPTIC YES)
+  set(LUA_EXPORT lua_export_x9e)
+  set(FLAVOUR x9e)
+  add_definitions(-DPCBX9E -DPCBX9)
+  add_definitions(-DEEPROM_VARIANT=0x8000)
+  add_definitions(-DPWR_BUTTON_${PWR_BUTTON})
+  set(FIRMWARE_TARGET_SRC
+    ${FIRMWARE_TARGET_SRC}
+    top_lcd_driver.cpp
+    startup_stm32f40_41xxx.s
+    )
+  set(AUX_SERIAL_DRIVER ../common/arm/stm32/aux_serial_driver.cpp)
+  if(STICKS STREQUAL HORUS)
+    add_definitions(-DHORUS_STICKS)
   endif()
-
-  set(QT_LIB_DIR ${qt_core_path} CACHE PATH "Path to Qt libraries (.dll|.framework|.so).")
-  find_path(QT_BIN_DIR NAMES "qmake" "qmake.exe" HINTS "${CMAKE_PREFIX_PATH}/bin" "${qt_core_path}/../bin" "${qt_core_path}" DOC "Path to Qt binaries (qmake, lupdate, etc.).")
-  find_program(QT_QMAKE_EXECUTABLE qmake HINTS "${QT_BIN_DIR}" DOC "Location of qmake program.")
-  find_program(QT_LUPDATE_EXECUTABLE lupdate HINTS "${QT_BIN_DIR}" DOC "Location of Qt's 'lupdate' program for updating translation files.")
-
-  # Try to find Qt translations
-  if(QT_QMAKE_EXECUTABLE)
-    execute_process(
-      COMMAND ${QT_QMAKE_EXECUTABLE} -query QT_INSTALL_TRANSLATIONS
-      OUTPUT_VARIABLE qt_translations_hint
-      OUTPUT_STRIP_TRAILING_WHITESPACE
+  set(GUI_DIR 212x64)
+  set(NAVIGATION_TYPE x9d)
+  set(BITMAPS_TARGET taranis_bitmaps)
+  set(FONTS_TARGET taranis_fonts)
+  set(LCD_DRIVER lcd_driver_spi.cpp)
+  set(LCD_DEPTH 4)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(STATUS_LEDS NO)
+  set(BLUETOOTH YES)
+  set(ROTARY_ENCODER YES)
+  add_definitions(-DMANUFACTURER_FRSKY)
+elseif(PCB STREQUAL X9D+)
+  set(HAPTIC YES)
+  set(LUA_EXPORT lua_export_x9d)
+  add_definitions(-DPCBX9DP -DPCBX9)
+  add_definitions(-DEEPROM_VARIANT=0)
+  set(GUI_DIR 212x64)
+  set(NAVIGATION_TYPE x9d)
+  set(BITMAPS_TARGET taranis_bitmaps)
+  set(FONTS_TARGET taranis_fonts)
+  set(LCD_DRIVER lcd_driver_spi.cpp)
+  set(LCD_DEPTH 4)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(PCBREV 2014 CACHE STRING "PCB Revision")
+  add_definitions(-DPCBREV=${PCBREV})
+  add_definitions(-DMANUFACTURER_FRSKY)
+  if (${PCBREV} STREQUAL 2019)
+    option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" OFF)
+    option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" ON)
+    set(FLAVOUR x9d+2019)
+    set(LUA_EXPORT lua_export_x9d+2019)
+    set(CPU_TYPE STM32F4)
+    set(CPU_TYPE_FULL STM32F407xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f4_flash.ld)
+    set(PWR_BUTTON "PRESS" CACHE STRING "Pwr button type (PRESS/SWITCH)")
+    set(FIRMWARE_TARGET_SRC
+      ${FIRMWARE_TARGET_SRC}
+      startup_stm32f40_41xxx.s
       )
-  endif()
-  find_path(QT_TRANSLATIONS_DIR NAMES "qt_en.qm" HINTS "${qt_translations_hint}" DOC "Path to prebuilt Qt translations (qt_*.qm).")
-
-  ### Common definitions for the Qt-based apps
-  list(APPEND APP_COMMON_DEFINES -DSIMU)
-  list(APPEND APP_COMMON_DEFINES -DQXT_STATIC)
-  list(APPEND APP_COMMON_DEFINES -DQT_USE_QSTRINGBUILDER)  # more efficient QString construction using % operator
-
-  if(MSVC)
-    list(APPEND APP_COMMON_DEFINES -D__STDC_LIMIT_MACROS)
-  endif()
-  if(APP_CUSTOM_DBG_HANDLER)
-    # provide full qDebug log context to our custom handler. This may also affect libsimulator, which is why it is here
-    list(APPEND APP_COMMON_DEFINES -DQT_MESSAGELOGCONTEXT)
-    list(APPEND APP_COMMON_DEFINES -DAPP_DBG_HANDLER_ENABLE=1)
-    if(APP_CUSTOM_DBG_LEVEL GREATER -1 AND APP_CUSTOM_DBG_LEVEL LESS 5)
-      list(APPEND APP_COMMON_DEFINES -DAPP_DBG_HANDLER_DEFAULT_LEVEL=${APP_CUSTOM_DBG_LEVEL})
-    endif()
-    if(NOT APP_CUSTOM_DBG_SHOW_FILE STREQUAL "DEFAULT" AND (APP_CUSTOM_DBG_SHOW_FILE STREQUAL "1" OR APP_CUSTOM_DBG_SHOW_FILE STREQUAL "0"))
-      list(APPEND APP_COMMON_DEFINES -DAPP_DBG_HANDLER_SHOW_SRC_PATH=${APP_CUSTOM_DBG_SHOW_FILE})
-    endif()
+    add_definitions(-DRADIO_X9DP2019)
+    add_definitions(-DSTM32F40_41xxx)
+    add_definitions(-DSOFTWARE_VOLUME -DPWR_BUTTON_${PWR_BUTTON} -DHARDWARE_POWER_MANAGEMENT_UNIT)
+    set(STATUS_LEDS YES)
+    set(PXX2 ON)
+    set(PXX_FREQUENCY "HIGH")
+    set(BLUETOOTH YES)
+    set(ROTARY_ENCODER YES)
+    set(INTERNAL_MODULE_SERIAL YES)
   else()
-    list(APPEND APP_COMMON_DEFINES -DAPP_DBG_HANDLER_ENABLE=0)
+    option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" ON)
+    option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" OFF)
+    set(FLAVOUR x9d+)
+    set(CPU_TYPE STM32F2)
+    set(CPU_TYPE_FULL STM32F205xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+    set(AUX_SERIAL_DRIVER ../common/arm/stm32/aux_serial_driver.cpp)
+    set(STATUS_LEDS NO)
   endif()
-
-else()
-  message(WARNING "Qt not found! Companion and Simulator builds disabled.")
-endif()
-
-if(NOT WIN32)
-  find_package(Fox QUIET)  # QUIET not working on WIN32?
-  if (FOX_FOUND)
-    message(STATUS "Foxlib found at ${FOX_LIBRARY}")
-  else() # if(NOT WIN32)
-    message("Libfox not found, simu target will not be available")
-  endif()
-endif()
-
-if(Qt5Core_FOUND OR FOX_FOUND)
-  set(SDL_BUILDING_LIBRARY YES)  # this prevents FindSDL from appending SDLmain lib to the results, which we don't want
-  find_package("SDL")
-  if(SDL_FOUND)
-    message(STATUS "SDL Lib: ${SDL_LIBRARY}; Headers: ${SDL_INCLUDE_DIR}; Version: ${SDL_VERSION_STRING}")
-    if (NOT ${SDL_VERSION_STRING} VERSION_LESS "2.0")
-      message(FATAL_ERROR "OpenTX requires SDL 1.x, not 2.x")
+elseif(PCB STREQUAL X9D)
+  option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" ON)
+  option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" OFF)
+  set(FLAVOUR x9d)
+  set(CPU_TYPE STM32F2)
+  set(CPU_TYPE_FULL STM32F205xE)  # for size report
+  set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+  option(HAPTIC "Haptic support" OFF)
+  set(LUA_EXPORT lua_export_x9d)
+  add_definitions(-DPCBX9D -DPCBX9)
+  add_definitions(-DEEPROM_VARIANT=0)
+  set(GUI_DIR 212x64)
+  set(NAVIGATION_TYPE x9d)
+  set(BITMAPS_TARGET taranis_bitmaps)
+  set(FONTS_TARGET taranis_fonts)
+  set(LCD_DEPTH 4)
+  set(LCD_DRIVER lcd_driver_aspi.cpp)
+  set(AUX_SERIAL_DRIVER ../common/arm/stm32/aux_serial_driver.cpp)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(STATUS_LEDS NO)
+  add_definitions(-DMANUFACTURER_FRSKY)
+elseif(PCB STREQUAL X7)
+  set(PWR_BUTTON "PRESS" CACHE STRING "Pwr button type (PRESS/SWITCH)")
+  set(HAPTIC YES)
+  set(GUI_DIR 128x64)
+  set(BITMAPS_TARGET 9x_bitmaps)
+  set(FONTS_TARGET 9x_fonts_1bit)
+  set(LCD_DRIVER lcd_driver_spi.cpp)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(STATUS_LEDS YES)
+  add_definitions(-DPCBX7 -DSOFTWARE_VOLUME)
+  add_definitions(-DPWR_BUTTON_${PWR_BUTTON})
+  if(PCBREV STREQUAL T12)
+    option(INTERNAL_MODULE_MULTI "Support for MULTI internal module" OFF)
+    set(FLAVOUR t12)
+    set(NAVIGATION_TYPE 9x)
+    set(CPU_TYPE STM32F2)
+    set(CPU_TYPE_FULL STM32F205xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+    set(LUA_EXPORT lua_export_t12)
+    add_definitions(-DRADIO_T12)
+    add_definitions(-DRADIO_FAMILY_JUMPER_T12)
+    add_definitions(-DEEPROM_VARIANT=0x4001)
+    add_definitions(-DMANUFACTURER_JUMPER)
+  elseif(PCBREV STREQUAL TPRO)
+    option(INTERNAL_MODULE_MULTI "Support for MULTI internal module" ON)
+    set(FLAVOUR tpro)
+    set(NAVIGATION_TYPE x7)
+    set(CPU_TYPE STM32F2)
+    set(ROTARY_ENCODER YES)
+    set(CPU_TYPE_FULL STM32F205xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+    set(LUA_EXPORT lua_export_tpro)
+    add_definitions(-DFUNCTION_SWITCHES)
+    add_definitions(-DRADIO_TPRO)
+    add_definitions(-DEEPROM_VARIANT=0x4005)
+    add_definitions(-DMANUFACTURER_JUMPER)
+  elseif(PCBREV STREQUAL TLITE)
+    option(INTERNAL_MODULE_MULTI "Support for MULTI internal module" ON)
+    set(FLAVOUR tlite)
+    set(NAVIGATION_TYPE 9x)
+    set(CPU_TYPE STM32F2)
+    set(CPU_TYPE_FULL STM32F205xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+    set(LUA_EXPORT lua_export_tlite)
+    add_definitions(-DRADIO_TLITE)
+    add_definitions(-DRADIO_FAMILY_JUMPER_T12)
+    add_definitions(-DEEPROM_VARIANT=0x4003)
+    add_definitions(-DMANUFACTURER_JUMPER)
+  elseif(PCBREV STREQUAL TX12)
+    option(INTERNAL_MODULE_MULTI "Support for MULTI internal module" ON)
+    set(FLAVOUR tx12)
+    set(NAVIGATION_TYPE x7)
+    set(CPU_TYPE STM32F2)
+    set(CPU_TYPE_FULL STM32F205xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+    set(ROTARY_ENCODER YES)
+    set(LUA_EXPORT lua_export_tx12)
+    set(BLUETOOTH NO)
+    set(USB_CHARGER YES)
+    add_definitions(-DRADIO_TX12)
+    add_definitions(-DEEPROM_VARIANT=0x4002)
+    add_definitions(-DMANUFACTURER_RADIOMASTER)
+  elseif(PCBREV STREQUAL ZORRO)
+    option(INTERNAL_MODULE_MULTI "Support for MULTI internal module" ON)
+    option(INTERNAL_MODULE_ELRS "Support for ELRS internal module" OFF)
+    set(FLAVOUR zorro)
+    set(NAVIGATION_TYPE x7)
+    set(CPU_TYPE STM32F4)
+    set(CPU_TYPE_FULL STM32F407xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f4_flash.ld)
+    set(FIRMWARE_TARGET_SRC
+      ${FIRMWARE_TARGET_SRC}
+      startup_stm32f40_41xxx.s
+      )
+    add_definitions(-DSTM32F40_41xxx)
+    set(ROTARY_ENCODER YES)
+    set(LUA_EXPORT lua_export_zorro)
+    set(BLUETOOTH NO)
+    set(USB_CHARGER YES)
+    set(AUX_SERIAL_DRIVER ../common/arm/stm32/aux_serial_driver.cpp)
+    add_definitions(-DRADIO_ZORRO)
+    add_definitions(-DEEPROM_VARIANT=0x4006)
+    add_definitions(-DMANUFACTURER_RADIOMASTER)
+  elseif(PCBREV STREQUAL T8)
+    option(INTERNAL_MODULE_MULTI "Support for MULTI internal module" ON)
+    set(EXTERNAL_MODULE YES)
+    set(AFHDS3 NO)
+    set(FLAVOUR Commando8)
+    set(NAVIGATION_TYPE x7)
+    set(CPU_TYPE STM32F2)
+    set(CPU_TYPE_FULL STM32F205xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+    set(ROTARY_ENCODER NO)
+    set(LUA_EXPORT lua_export_t8)
+    set(BLUETOOTH NO)
+    if(RADIOMASTER_RELEASE)
+      set(BIND_KEY NO)
     endif()
+    add_definitions(-DRADIO_T8)
+    add_definitions(-DEEPROM_VARIANT=0x4004)
+    add_definitions(-DMANUFACTURER_RADIOMASTER)
+  elseif(PCBREV STREQUAL ACCESS)
+    option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" OFF)
+    option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" ON)
+    set(FLAVOUR x7access)
+    set(NAVIGATION_TYPE x7)
+    set(CPU_TYPE STM32F4)
+    set(CPU_TYPE_FULL STM32F407xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f4_flash.ld)
+    set(LUA_EXPORT lua_export_x7access)
+    add_definitions(-DRADIO_X7ACCESS)
+    add_definitions(-DEEPROM_VARIANT=0x4000)
+    add_definitions(-DPCBREV=${PCBREV})
+    add_definitions(-DPCBX7ACCESS)
+    set(FIRMWARE_TARGET_SRC
+      ${FIRMWARE_TARGET_SRC}
+      startup_stm32f40_41xxx.s
+      )
+    add_definitions(-DSTM32F40_41xxx)
+    add_definitions(-DHARDWARE_POWER_MANAGEMENT_UNIT)
+    set(PXX2 ON)
+    set(PXX_FREQUENCY "HIGH")
+    set(BLUETOOTH YES)
+    set(ROTARY_ENCODER YES)
+    set(INTERNAL_MODULE_SERIAL YES)
+    add_definitions(-DMANUFACTURER_FRSKY)
   else()
-    message(STATUS "SDL not found! Simulator audio, and joystick inputs, will not work.")
-  endif()
-endif()
-endif(NOT DISABLE_COMPANION)
-
-# Check for a file that is typically left from a OpenTX 2.1 build and abort if found
-if (EXISTS ${RADIO_SRC_DIRECTORY}/stamp.h OR EXISTS ${RADIO_SRC_DIRECTORY}/translations/en.h)
-   message(FATAL_ERROR "Source directory contains files leftover from a OpenTX 2.1 build. Please run `git clean -f` in source directory (Careful: Will remove any extra files) or do a new clean git checkout")
-endif()
-
-# Windows-specific includes and libs shared by sub-projects
-if(WIN32)
-  list(APPEND WIN_INCLUDE_DIRS "${RADIO_SRC_DIRECTORY}/thirdparty/windows/dirent")
-  if(MSVC)
-    list(APPEND WIN_INCLUDE_DIRS "${RADIO_SRC_DIRECTORY}/thirdparty/windows/msinttypes")
-    set(WIN_PTHREAD_BASE_PATH "${WIN_EXTRA_LIBS_PATH}/pthreads/Pre-built.2" CACHE PATH "Where to find pthreads include and lib folders.")
-    list(APPEND WIN_INCLUDE_DIRS "${WIN_PTHREAD_BASE_PATH}/include")
-    find_file(WIN_PTHREAD_LIB pthreadVC2.lib PATHS "${WIN_PTHREAD_BASE_PATH}" PATH_SUFFIXES lib/x86 lib NO_DEFAULT_PATH)
-    find_file(WIN_PTHREAD_DLL pthreadVC2.dll PATHS "${WIN_PTHREAD_BASE_PATH}" PATH_SUFFIXES lib/x86 lib dll/x86 dll NO_DEFAULT_PATH)
-    if(WIN_PTHREAD_LIB)
-      list(APPEND WIN_LINK_LIBRARIES "${WIN_PTHREAD_LIB}")
-    else()
-      message(SEND_ERROR "pthreadVC2.lib not found!")
+    option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" ON)
+    option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" OFF)
+    set(FLAVOUR x7)
+    set(NAVIGATION_TYPE x7)
+    set(CPU_TYPE STM32F2)
+    set(CPU_TYPE_FULL STM32F205xE)  # for size report
+    set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+    set(LUA_EXPORT lua_export_x7)
+    add_definitions(-DRADIO_X7)
+    add_definitions(-DEEPROM_VARIANT=0x4000)
+    set(BLUETOOTH YES)
+    add_definitions(-DBLUETOOTH_PROBE)
+    set(ROTARY_ENCODER YES)
+    add_definitions(-DMANUFACTURER_FRSKY)
+    if(DEFINED PCBREV_HARDCODED)
+      # This *can* be used to prevent messing with PA14 (SWCLK), so stlink can be used
+      # without interruptions.
+      if(NOT ${PCBREV_HARDCODED} MATCHES "^[0-1]$")
+        message(FATAL_ERROR "PCBREV_HARDCODED must be 0 or 1, not '${PCBREV_HARDCODED}'")
+      endif()
+      add_definitions(-DPCBREV_HARDCODED=${PCBREV_HARDCODED})
     endif()
-  else()
-    set(CMAKE_C_USE_RESPONSE_FILE_FOR_INCLUDES OFF)
-    set(CMAKE_C_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
-    set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_INCLUDES OFF)
-    set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
   endif()
+elseif(PCB STREQUAL X9LITE)
+  option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" OFF)
+  option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" ON)
+  set(PXX_FREQUENCY "HIGH")
+  set(PWR_BUTTON "PRESS" CACHE STRING "Pwr button type (PRESS/SWITCH)")
+  set(CPU_TYPE STM32F2)
+  set(CPU_TYPE_FULL STM32F205xE)  # for size report
+  set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+  set(HAPTIC YES)
+  set(LUA_EXPORT lua_export_x9lite)
+  set(FLAVOUR x9lite)
+  add_definitions(-DBOARD_NAME="x9lite")
+  add_definitions(-DPCBX9LITE -DPCBX9 -DSOFTWARE_VOLUME -DHARDWARE_POWER_MANAGEMENT_UNIT)
+  add_definitions(-DEEPROM_VARIANT=0x0800)
+  add_definitions(-DPWR_BUTTON_${PWR_BUTTON})
+  set(PXX2 ON)
+  set(GUI_DIR 128x64)
+  set(NAVIGATION_TYPE x7)
+  set(BITMAPS_TARGET 9x_bitmaps)
+  set(FONTS_TARGET 9x_fonts_1bit)
+  set(LCD_DRIVER lcd_driver_spi.cpp)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(STATUS_LEDS YES)
+  set(ROTARY_ENCODER YES)
+  set(INTERNAL_MODULE_SERIAL YES)
+  add_definitions(-DMANUFACTURER_FRSKY)
+elseif(PCB STREQUAL X9LITES)
+  option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" OFF)
+  option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" ON)
+  set(PXX_FREQUENCY "HIGH")
+  set(PWR_BUTTON "PRESS" CACHE STRING "Pwr button type (PRESS/SWITCH)")
+  set(CPU_TYPE STM32F2)
+  set(CPU_TYPE_FULL STM32F205xE)  # for size report
+  set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+  set(HAPTIC YES)
+  set(LUA_EXPORT lua_export_x9lites)
+  set(FLAVOUR x9lites)
+  add_definitions(-DBOARD_NAME="x9lites")
+  add_definitions(-DPCBX9LITES -DPCBX9LITE -DPCBX9 -DSOFTWARE_VOLUME -DHARDWARE_POWER_MANAGEMENT_UNIT)
+  add_definitions(-DEEPROM_VARIANT=0x0801)
+  add_definitions(-DPWR_BUTTON_${PWR_BUTTON})
+  set(PXX2 ON)
+  set(GUI_DIR 128x64)
+  set(NAVIGATION_TYPE x7)
+  set(BITMAPS_TARGET 9x_bitmaps)
+  set(FONTS_TARGET 9x_fonts_1bit)
+  set(LCD_DRIVER lcd_driver_spi.cpp)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(STATUS_LEDS YES)
+  set(BLUETOOTH YES)
+  set(ROTARY_ENCODER YES)
+  set(INTERNAL_MODULE_SERIAL YES)
+  add_definitions(-DMANUFACTURER_FRSKY)
+elseif(PCB STREQUAL XLITE)
+  option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" ON)
+  option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" OFF)
+  set(PXX_FREQUENCY "HIGH" CACHE STRING "PXX frequency (LOW / HIGH)") # always use HIGH except on some prototype boards
+  set(PWR_BUTTON "PRESS" CACHE STRING "Pwr button type (PRESS/SWITCH)")
+  set(CPU_TYPE STM32F2)
+  set(CPU_TYPE_FULL STM32F205xE)  # for size report
+  set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+  set(HAPTIC YES)
+  set(LUA_EXPORT lua_export_xlite)
+  set(FLAVOUR xlite)
+  add_definitions(-DPCBXLITE -DSOFTWARE_VOLUME -DSTICKS_PWM)
+  add_definitions(-DEEPROM_VARIANT=0x2000)
+  add_definitions(-DPWR_BUTTON_${PWR_BUTTON})
+  set(PXX2 ON)
+  set(GUI_DIR 128x64)
+  set(NAVIGATION_TYPE xlite)
+  set(BITMAPS_TARGET 9x_bitmaps)
+  set(FONTS_TARGET 9x_fonts_1bit)
+  set(LCD_DRIVER lcd_driver_spi.cpp)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(STATUS_LEDS YES)
+  set(BLUETOOTH YES)
+  set(INTERNAL_MODULE_SERIAL YES)
+  add_definitions(-DMANUFACTURER_FRSKY)
+elseif(PCB STREQUAL XLITES)
+  option(INTERNAL_MODULE_PXX1 "Support for PXX1 internal module" OFF)
+  option(INTERNAL_MODULE_PXX2 "Support for PXX2 internal module" ON)
+  set(PXX_FREQUENCY "HIGH")
+  set(PWR_BUTTON "PRESS" CACHE STRING "Pwr button type (PRESS/SWITCH)")
+  set(CPU_TYPE STM32F2)
+  set(CPU_TYPE_FULL STM32F205xE)  # for size report
+  set(LINKER_SCRIPT targets/taranis/stm32f2_flash.ld)
+  set(HAPTIC YES)
+  set(LUA_EXPORT lua_export_xlites)
+  set(FLAVOUR xlites)
+  add_definitions(-DPCBXLITES -DPCBXLITE -DSOFTWARE_VOLUME -DSTICKS_PWM -DHARDWARE_POWER_MANAGEMENT_UNIT)
+  add_definitions(-DEEPROM_VARIANT=0x1000)
+  add_definitions(-DPWR_BUTTON_${PWR_BUTTON})
+  set(GUI_DIR 128x64)
+  set(NAVIGATION_TYPE xlite)
+  set(BITMAPS_TARGET 9x_bitmaps)
+  set(FONTS_TARGET 9x_fonts_1bit)
+  set(LCD_DRIVER lcd_driver_spi.cpp)
+  set(GVAR_SCREEN model_gvars.cpp)
+  set(STATUS_LEDS YES)
+  set(PXX2 ON)
+  set(BLUETOOTH YES)
+  set(GYRO YES)
+  set(INTERNAL_MODULE_SERIAL YES)
+  add_definitions(-DMANUFACTURER_FRSKY)
 endif()
 
-set(GTEST_ROOT /usr CACHE STRING "Base path to Google Test headers and source.")
-
-find_path(GTEST_INCDIR gtest/gtest.h HINTS "${GTEST_ROOT}/include" DOC "Path to Google Test header files folder ('gtest/gtest.h').")
-find_path(GTEST_SRCDIR src/gtest-all.cc HINTS "${GTEST_ROOT}" "${GTEST_ROOT}/src/gtest" DOC "Path of Google Test 'src' folder.")
-
-if(NOT GTEST_INCDIR OR NOT GTEST_SRCDIR)
-  message(STATUS "Googletest will be downloaded")
-
-  set(GTEST_VERSION 1.8.1)
-
-  set(GTEST_SRCDIR "${RADIO_SRC_DIRECTORY}/tests/googletest-release-${GTEST_VERSION}/googletest")
-  set(GTEST_INCDIR "${GTEST_SRCDIR}/include")
-
-  set(GTEST_URL     "https://github.com/google/googletest/archive/release-${GTEST_VERSION}.tar.gz")
-  set(GTEST_ARCHIVE "${RADIO_SRC_DIRECTORY}/tests/gtest-${GTEST_VERSION}.tar.gz")
-
-  if (NOT EXISTS "${GTEST_SRCDIR}")
-    file(DOWNLOAD "${GTEST_URL}" ${GTEST_ARCHIVE} SHOW_PROGRESS)
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E tar -xf ${GTEST_ARCHIVE}
-      WORKING_DIRECTORY ${RADIO_SRC_DIRECTORY}/tests)
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E remove -f ${GTEST_ARCHIVE})
-  endif()
+if(GYRO)
+  add_definitions(-DGYRO)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    ../common/arm/stm32/lsm6ds_driver.cpp
+    )
+  set(SRC
+    ${SRC}
+    gyro.cpp
+    )
 endif()
 
-add_subdirectory(${RADIO_SRC_DIRECTORY})
+if(INTERNAL_MODULE_SERIAL)
+  add_definitions(-DINTERNAL_MODULE_SERIAL)
+  if(PXX_FREQUENCY STREQUAL HIGH)
+    add_definitions(-DPXX_FREQUENCY_HIGH)
+  endif()
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    ../common/arm/stm32/intmodule_serial_driver.cpp
+    )
+elseif(INTERNAL_MODULE_PXX1 OR INTERNAL_MODULE_PXX2)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    intmodule_pulses_driver.cpp
+    )
+endif()
 
-add_custom_target(tests-radio
-  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/gtests-radio
-  DEPENDS gtests-radio
+if(ROTARY_ENCODER)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    ../common/arm/stm32/rotary_encoder_driver.cpp
+    )
+endif()
+
+if(BIND_KEY)
+  set(TARGET_SRC
+        ${TARGET_SRC}
+        bind_button_driver.cpp
+        )
+  add_definitions(-DBIND_KEY)
+endif()
+
+if(USB_CHARGER)
+  set(TARGET_SRC ${TARGET_SRC} usb_charger_driver.cpp)
+  add_definitions(-DUSB_CHARGER)
+endif()
+
+if(BLUETOOTH)
+  add_definitions(-DBLUETOOTH)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    ../common/arm/stm32/bluetooth_driver.cpp
+    )
+  set(SRC
+    ${SRC}
+    bluetooth.cpp
+    )
+endif()
+
+if(AUTOUPDATE)
+  add_definitions(-DAUTOUPDATE)
+endif()
+
+set(HSE_VALUE 12000000)
+set(SDCARD YES)
+set(EEPROM EEPROM_RLC)
+set(TARGET_DIR taranis)
+set(PPM_LIMITS_SYMETRICAL YES)
+
+if(SPLASH STREQUAL OFF)
+  message(FATAL_ERROR "Option SPLASH=OFF not supported on Taranis")
+endif()
+
+add_definitions(-DPCBTARANIS)
+add_definitions(-DAUDIO -DVOICE -DRTCLOCK)
+add_definitions(-DSBUS_TRAINER)
+
+set(SRC
+  ${SRC}
+  io/frsky_firmware_update.cpp
+  io/multi_firmware_update.cpp
   )
 
-if(Qt5Core_FOUND AND NOT DISABLE_COMPANION)
-  add_subdirectory(${COMPANION_SRC_DIRECTORY})
-  add_custom_target(tests-companion
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/gtests-companion
-    DEPENDS gtests-companion
-    )
-  add_custom_target(gtests
-    DEPENDS gtests-radio gtests-companion
-    )
-  add_custom_target(tests
-    DEPENDS tests-radio tests-companion
+set(GUI_SRC
+  ${GUI_SRC}
+  model_input_edit.cpp
+  model_mix_edit.cpp
+  model_display.cpp
+  radio_diagkeys.cpp
+  radio_diaganas.cpp
+  view_channels.cpp
+  view_telemetry.cpp
+  view_about.cpp
+  bmp.cpp
   )
-else()
-  add_custom_target(gtests
-    DEPENDS gtests-radio
-    )
-  add_custom_target(tests
-    DEPENDS tests-radio
-  )
+
+if(STATUS_LEDS)
+  set(LED_DRIVER led_driver.cpp)
 endif()
+
+set(SRC
+  ${SRC}
+  sbus.cpp
+  )
+
+set(TARGET_SRC
+  ${TARGET_SRC}
+  ${LED_DRIVER}
+  backlight_driver.cpp
+  trainer_driver.cpp
+  ../common/arm/stm32/timers_driver.cpp
+  ../common/arm/stm32/audio_dac_driver.cpp
+  ../common/arm/stm32/adc_driver.cpp
+  ../common/arm/stm32/heartbeat_driver.cpp
+  ../common/arm/stm32/mixer_scheduler_driver.cpp
+  )
+
+if(PCB STREQUAL XLITE OR PCB STREQUAL XLITES)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    ../common/arm/stm32/sticks_pwm_driver.cpp
+    )
+endif()
+
+set(FIRMWARE_TARGET_SRC
+  ${FIRMWARE_TARGET_SRC}
+  ${LCD_DRIVER}
+  board.cpp
+  i2c_driver.cpp
+  ../common/arm/stm32/pwr_driver.cpp
+  ../common/arm/loadboot.cpp
+  )
+
+if(LCD_DUAL_BUFFER)
+  add_definitions(-DLCD_DUAL_BUFFER)
+endif()
+
+if(INTERNAL_MODULE_PXX1)
+  add_definitions(-DHARDWARE_INTERNAL_MODULE)
+  add_definitions(-DINTERNAL_MODULE_PXX1)
+endif()
+
+if(INTERNAL_MODULE_PXX2)
+  set(PXX2 ON)
+  add_definitions(-DHARDWARE_INTERNAL_MODULE)
+  add_definitions(-DINTERNAL_MODULE_PXX2)
+endif()
+
+if(INTERNAL_MODULE_ELRS)
+  add_definitions(-DHARDWARE_INTERNAL_MODULE)
+  add_definitions(-DINTERNAL_MODULE_ELRS)
+  set(INTERNAL_MODULE_MULTI NO)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    ../common/arm/stm32/intmodule_serial_driver.cpp
+    )
+endif()
+
+if(INTERNAL_MODULE_MULTI)
+  add_definitions(-DHARDWARE_INTERNAL_MODULE)
+  add_definitions(-DINTERNAL_MODULE_MULTI)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    ../common/arm/stm32/intmodule_serial_driver.cpp
+    )
+endif()
+
+if(INTERNAL_MODULE_PPM)
+  add_definitions(-DHARDWARE_INTERNAL_MODULE)
+  add_definitions(-DINTERNAL_MODULE_PPM)
+endif()
+
+if(INTERNAL_MODULE_ELRS)
+  add_definitions(-DHARDWARE_INTERNAL_MODULE)
+  add_definitions(-DINTERNAL_MODULE_ELRS)
+endif()
+
+if(EXTERNAL_MODULE)
+  set(TARGET_SRC
+    ${TARGET_SRC}
+    extmodule_driver.cpp
+    )
+  add_definitions(-DHARDWARE_EXTERNAL_MODULE)
+endif()
+
+set(RADIO_DEPENDENCIES ${RADIO_DEPENDENCIES} ${BITMAPS_TARGET})
